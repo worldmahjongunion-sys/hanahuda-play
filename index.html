@@ -2,8 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>花合わせ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🎴%3C/text%3E%3C/svg%3E">
 <style>
   :root{
     --felt:#0B4530;
@@ -21,6 +22,12 @@
     color:var(--text-light);
   }
   .board{
+    /* 札・レイアウトの寸法。PC（従来の表示）ではこの既定値のまま。狭い画面ではJSのapplyLayout()が
+       画面サイズから計算して上書きする（JS側のCARD_W等の定数と必ずそろえる） */
+    --cw:76px; --ch:109px;      /* 手札・場札 */
+    --mw:76px; --mh:109px;      /* CPUの手札（裏向き・手役で公開した札） */
+    --cmw:26px; --cmh:37px;     /* 取札 */
+    --gap:4px; --step:0px; --cstep:0px; --side:0px;
     position:relative;
     height:100dvh;
     width:100vw;
@@ -211,12 +218,13 @@
 
   .hand-row{
     display:flex;
-    gap:4px;
+    gap:var(--gap);
     justify-content:center;
     flex-wrap:nowrap;
     min-height:80px;
   }
-  .hand-row.small{ min-height:109px; }
+  .hand-row.small{ min-height:var(--mh); }
+  .hand-row.small .card{ width:var(--mw); height:var(--mh); }
   .captured-row{
     display:flex;
     gap:2px;
@@ -225,7 +233,7 @@
     flex-wrap:wrap;
     max-width:360px;
   }
-  .captured-row .card{ width:26px; height:37px; }
+  .captured-row .card{ width:var(--cmw); height:var(--cmh); }
   /* 対局終了時は場札・手札と同じ大きさで取札を表示する（枚数が多ければ折り返す）。
      2段目以降が画面中央で衝突しないよう、各自ごとに片端（左右）に寄せて折り返す。 */
   .captured-row.large{ gap:4px; max-width:47vw; }
@@ -236,8 +244,8 @@
   .board.ended{ overflow-y:auto; }
 
   .card{
-    width:76px;
-    height:109px;
+    width:var(--cw);
+    height:var(--ch);
     background:#0A0A0A;
     border:1px solid rgba(255,255,255,0.08);
     border-radius:6px;
@@ -256,8 +264,8 @@
   .card svg{ width:100%; height:100%; display:block; border-radius:5px; }
 
   .card-back{
-    width:76px;
-    height:109px;
+    width:var(--cw);
+    height:var(--ch);
     border-radius:6px;
     background:
       repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 3px, transparent 3px 8px),
@@ -266,7 +274,7 @@
     box-shadow:0 2px 4px rgba(0,0,0,0.45);
     flex-shrink:0;
   }
-  .card-back.small{ width:76px; height:109px; }
+  .card-back.small{ width:var(--mw); height:var(--mh); }
 
   .hand-with-score{
     display:flex;
@@ -301,9 +309,9 @@
     white-space:nowrap;
   }
   /* 対局終了後は役バッジを取札の中央上ではなく、各自の取札と同じ側の端（上寄せ）に揃える */
-  .board.ended #yakuLiveYou{ align-self:flex-start; justify-content:flex-start; }
-  .board.ended #yakuLiveCpuA{ align-self:flex-start; justify-content:flex-start; }
-  .board.ended #yakuLiveCpuB{ align-self:flex-start; justify-content:flex-start; }
+  .board.ended:not(.compact) #yakuLiveYou{ align-self:flex-start; justify-content:flex-start; }
+  .board.ended:not(.compact) #yakuLiveCpuA{ align-self:flex-start; justify-content:flex-start; }
+  .board.ended:not(.compact) #yakuLiveCpuB{ align-self:flex-start; justify-content:flex-start; }
 
   .turn-indicator{
     text-align:center;
@@ -404,6 +412,171 @@
   }
   .yaku-toast .toast-points{ font-size:13px; color:var(--text-light); margin-left:6px; }
 
+
+  /* =====================================================================
+     コンパクト表示（スマホなど狭い画面）。JSのapplyLayout()が .board に compact と
+     portrait／landscape を付け、--cw 等の寸法を画面サイズから計算して設定する。
+     PC（幅1240px以上かつ高さ800px以上）では compact が付かず、従来の表示のまま。
+     ===================================================================== */
+  .hud{ display:contents; }
+  .credit-btn{ display:none; }
+  .result-reopen{ display:none; }
+  .compact-only{ display:none; }
+
+  .board.compact{
+    gap:2px;
+    padding:max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+  }
+  /* --- HUD：音・月・倍率・クレジットボタン・累計・役の通知を、札と重ならない専用の帯にまとめる */
+  .board.compact .hud{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:center;
+    gap:3px 6px;
+    flex-shrink:0;
+  }
+  .board.compact .hud > *{ position:static; transform:none; }
+  .board.compact .sound-controls{ order:1; padding:2px 8px; gap:4px; }
+  .board.compact .sound-controls input[type="range"]{ width:48px; }
+  .board.compact .month-indicator{ order:2; font-size:12px; padding:3px 10px; }
+  .board.compact .multiplier-indicator{ order:3; font-size:12px; padding:2px 10px; }
+  .board.compact .credit-btn{
+    order:4;
+    display:inline-block;
+    background:rgba(0,0,0,0.35);
+    border:1px solid rgba(216,180,90,0.5);
+    color:var(--text-light);
+    font-size:11px;
+    border-radius:14px;
+    padding:3px 10px;
+    cursor:pointer;
+  }
+  .board.compact .cumulative-indicator{ order:5; flex-basis:100%; text-align:center; font-size:10px; padding:1px 8px; background:none; }
+  .board.compact .toast-area{
+    order:6;
+    flex-basis:100%;
+    flex-direction:row;
+    flex-wrap:wrap;
+    justify-content:center;
+    align-content:flex-start;
+    gap:4px;
+    min-height:42px;      /* 通知が出ても札の位置がずれないよう、2行ぶんを常に確保しておく */
+  }
+  .board.compact .yaku-toast{ font-size:11px; padding:3px 10px; border-width:1px; }
+  .board.compact .yaku-toast .toast-points{ font-size:10px; margin-left:4px; }
+
+  /* --- クレジット：狭い画面では「クレジット」ボタンで表示する（表記そのものは必ず残す） */
+  .board.compact .credit{
+    display:none;
+    position:fixed;
+    right:8px;
+    bottom:8px;
+    left:8px;
+    z-index:300;
+    opacity:1;
+    background:rgba(5,20,12,0.97);
+    border:1px solid var(--gold);
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:12px;
+    line-height:1.6;
+    text-align:left;
+    pointer-events:auto;
+  }
+  .board.compact .credit.open{ display:block; }
+
+  /* --- CPU（上部）：手札は小さく重ねて表示。手役で公開した札は先頭に表向きで並ぶ */
+  .board.compact .top-row{ padding:0; gap:6px; }
+  .board.compact .cpu-area{ flex:1 1 0; min-width:0; gap:2px; }
+  .board.compact .cpu-area .label{ font-size:11px; }
+  .board.compact .hand-with-score{ flex-wrap:wrap; justify-content:center; gap:2px 6px; width:100%; }
+  .board.compact .hand-with-score .hand-row{ flex:0 0 100%; order:1; }
+  .board.compact .live-score{ order:-1; font-size:12px; padding:1px 8px; }
+  .board.compact .hand-with-score .role-tag{ order:-1; margin-left:0; }
+  .board.compact .cpu-area .label .role-tag{ margin-left:4px; }
+  .board.compact .hand-row.small{ gap:0; min-height:var(--mh); }
+  .board.compact .hand-row.small > *:not(:first-child){ margin-left:calc(var(--step) - var(--mw)); }
+  .board.compact .yaku-live{ max-width:100%; min-height:16px; gap:2px; }
+  .board.compact .yaku-tag{ font-size:10px; padding:0 4px; }
+  /* 取札：小さく重ねて表示（各札は右へ--cstepずつずらし、幅が足りなければ折り返す） */
+  .board.compact .captured-row{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, var(--cstep));
+    justify-content:start;
+    gap:2px 0;
+    width:100%;
+    max-width:100%;
+    min-height:var(--cmh);
+    padding-right:calc(var(--cmw) - var(--cstep));
+  }
+  .board.compact .captured-row .card{ border-radius:3px; box-shadow:0 1px 2px rgba(0,0,0,0.5); }
+
+  /* --- 場札：幅いっぱいに折り返して並べる（束・重なりも実寸で折り返す） */
+  .board.compact .field-area{ width:100%; align-items:stretch; }
+  .board.compact .field-grid{ width:100%; height:100%; }
+  .board.compact .field-grid-rows{ justify-content:center; }
+  .board.compact .field-row.wrap{ flex-wrap:wrap; gap:6px 4px; max-width:100%; transform-origin:center center; }
+  .board.compact .reveal-slot{ top:0; }
+
+  /* --- 自分（下部） */
+  .board.compact .player-area{ width:100%; padding:0 0 2px; gap:2px; }
+  .board.compact .turn-indicator{ font-size:11px; line-height:1.3; min-height:2.7em; padding:0 4px; }
+  .board.compact .hand-row:not(.small){ min-height:var(--ch); }
+
+  /* --- 結果画面：全画面のパネルにして、パネル内だけスクロールできるようにする */
+  .board.compact.ended{ overflow:hidden; }
+  .board.compact .result-box{
+    position:fixed;
+    top:6px;
+    left:6px;
+    right:6px;
+    bottom:auto;
+    max-height:calc(100dvh - 12px);
+    background:#05140c;
+    z-index:200;
+    max-width:none;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    padding:8px;
+    font-size:12px;
+  }
+  .board.compact .breakdown-row{ gap:6px; }
+  .board.compact .breakdown-block{ flex:1 1 150px; width:auto; max-width:230px; padding:4px 8px; }
+  .board.compact .result-actions{
+    position:sticky;
+    bottom:-8px;
+    background:rgba(5,20,12,0.98);
+    padding:8px 0;
+    margin-top:8px;
+    flex-wrap:wrap;
+  }
+  .board.compact .result-btn{ padding:8px 14px; }
+  .board.compact .compact-only{ display:inline-block; }
+  .result-reopen{
+    position:fixed;
+    right:10px;
+    bottom:10px;
+    z-index:150;
+  }
+
+  /* --- 横向き：左右にCPU、中央に場札と自分の手札 */
+  .board.landscape{
+    display:grid;
+    grid-template-columns:var(--side) minmax(0, 1fr) var(--side);
+    grid-template-rows:auto minmax(0, 1fr) auto;
+    column-gap:6px;
+    row-gap:2px;
+  }
+  .board.landscape .hud{ grid-column:1 / -1; grid-row:1; flex-wrap:nowrap; }
+  .board.landscape .cumulative-indicator{ flex-basis:auto; white-space:nowrap; }
+  .board.landscape .toast-area{ flex:1 1 0; flex-basis:0; min-width:0; min-height:38px; }
+  .board.landscape .top-row{ display:contents; }
+  .board.landscape .top-row .cpu-area:first-child{ grid-column:1; grid-row:2 / 4; align-self:start; }
+  .board.landscape .top-row .cpu-area:last-child{ grid-column:3; grid-row:2 / 4; align-self:start; }
+  .board.landscape .field-area{ grid-column:2; grid-row:2; }
+  .board.landscape .player-area{ grid-column:2; grid-row:3; }
+
   .credit{
     position:absolute;
     right:6px;
@@ -421,6 +594,7 @@
 <body>
 
 <div class="board">
+  <div class="hud" id="hud">
   <div class="sound-controls">
     <button type="button" class="sound-toggle" id="muteToggle" aria-label="音を消す/戻す">🔊</button>
     <input type="range" id="volumeSlider" min="0" max="100" value="70" aria-label="音量">
@@ -429,6 +603,8 @@
   <div class="month-indicator" id="monthIndicator">1月</div>
   <div class="multiplier-indicator" id="multiplierIndicator"></div>
   <div class="cumulative-indicator" id="cumulativeIndicator"></div>
+  <button type="button" class="credit-btn" id="creditBtn" aria-label="クレジット表記を表示">クレジット</button>
+  </div>
   <div class="top-row">
     <div class="cpu-area">
       <span class="label">CPU-A<span class="role-tag" id="roleTagCpuA"></span></span>
@@ -468,6 +644,7 @@
       <span class="role-tag" id="roleTagYou"></span>
     </div>
   </div>
+  <button type="button" class="result-btn result-reopen" id="resultReopen">結果を見る</button>
   <div class="credit">
     札の絵柄: <a href="https://commons.wikimedia.org/wiki/User:Louiemantia" target="_blank" rel="noopener">Louiemantia</a>
     (<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>), via Wikimedia Commons<br>
@@ -1169,6 +1346,7 @@ const VOICE_YAKU = {
     renderMultiplier();
     if(fieldMultiplier.mult > 1) showToast(`${fieldMultiplier.name}（${fieldMultiplier.mult}倍）`);
     document.getElementById("resultBox").style.display = "none";
+    document.getElementById("resultReopen").style.display = "none";
     document.getElementById("monthIndicator").textContent = currentMonth + "月";
     renderRoles();
     renderCumulative();
@@ -1213,9 +1391,12 @@ const VOICE_YAKU = {
   }
 
   // 場札同士が同じ月で重なる時のずらし幅（下の札の半分が見えるよう、右下方向にずらす）
-  const CARD_W = 76, CARD_H = 109;
-  const STACK_DX = 38, STACK_DY = 54;
-  const STACK_DX_COMPACT = 30, STACK_DY_COMPACT = 36; // 4枚以上の束用
+  // ※ CSSの --cw/--ch 等と必ずそろえる。PC（従来レイアウト）は下の既定値。狭い画面（compact）では
+  //   applyLayout()／setCardSizes() が画面サイズから計算して、CSS変数とこれらの定数を同時に更新する
+  let CARD_W = 76, CARD_H = 109;
+  let STACK_DX = 38, STACK_DY = 54;
+  let STACK_DX_COMPACT = 30, STACK_DY_COMPACT = 36; // 4枚以上の束用
+  const LAYOUT = { compact:false, mode:"full" };
   const STEP_PAUSE_MS = 800; // 1手番を「①手札処理→②めくり札表示→③めくり札処理」の3段階に分け、各段階の後に置く静止時間
 
   // 場札の段組み：1段あたり最大4枚、段数=⌈枚数/4⌉で、余りは先頭の段から均等配分する
@@ -1237,19 +1418,23 @@ const VOICE_YAKU = {
     const el = document.getElementById(elId);
     el.innerHTML = "";
     let cursor = 0;
-    fieldRowSizes(list.length).forEach(size => {
+    // compact（スマホ等）では段組みを固定せず、実寸のまま幅いっぱいに折り返して並べる
+    const rowSizes = LAYOUT.compact ? (list.length ? [list.length] : []) : fieldRowSizes(list.length);
+    rowSizes.forEach(size => {
       const rowEntries = list.slice(cursor, cursor + size);
       cursor += size;
       const row = document.createElement("div");
-      row.className = "field-row";
+      row.className = "field-row" + (LAYOUT.compact ? " wrap" : "");
       rowEntries.forEach(entry => {
         const layers = entry.isStuck ? entry.cards : [entry];
         const o = entry.__held ? {} : (optsFn ? optsFn(entry) : {});
         const n = layers.length;
         // 4枚以上の束（配札時の4枚そろい・5枚の張り付きなど）は、場札エリアからはみ出さないよう
         // 3枚重ねと同程度の大きさに収まるずらし幅にする
-        const dx = n >= 4 ? STACK_DX_COMPACT : STACK_DX;
-        const dy = n >= 4 ? STACK_DY_COMPACT : STACK_DY;
+        // （狭い画面では、場所をとらないよう3枚重ねから狭い重ね幅にする）
+        const tight = n >= (LAYOUT.compact ? 3 : 4);
+        const dx = tight ? STACK_DX_COMPACT : STACK_DX;
+        const dy = tight ? STACK_DY_COMPACT : STACK_DY;
         const cell = document.createElement("div");
         cell.className = "field-cell" + (entry.__held ? " held" : "");
         cell.style.width = (CARD_W + dx * Math.max(0, n - 1)) + "px";
@@ -1304,6 +1489,34 @@ const VOICE_YAKU = {
       back.className = "card-back small";
       el.appendChild(back);
     }
+    if(LAYOUT.compact) spreadCpuHand(el, shown.length);
+  }
+
+  // compact表示：CPUの手札は幅に収まるよう重ねる。公開札（先頭のk枚）はできるだけ重ねず、
+  // 裏向きの札の重なりを増やして幅を確保する（--cpuColWは applyLayout が設定）
+  function spreadCpuHand(el, k){
+    const kids = [...el.children];
+    const n = kids.length;
+    if(n < 2) return;
+    const mw = parseFloat(getComputedStyle(el).getPropertyValue("--mw")) || CARD_W;
+    const colW = LAYOUT.cpuColW || 180;
+    const b = n - k;                      // 裏向きの枚数
+    const minBackStep = 8;
+    let sr, sb;
+    if(k === 0){
+      sr = sb = Math.min(mw + 1, Math.floor((colW - mw) / (n - 1)));
+    } else if(b === 0){
+      sr = sb = Math.min(mw + 1, Math.floor((colW - mw) / (n - 1)));
+    } else {
+      sr = Math.min(mw + 1, Math.floor((colW - mw - (b - 1) * minBackStep) / k));
+      sb = b > 1 ? Math.min(sr, Math.max(minBackStep, Math.floor((colW - mw - k * sr) / (b - 1)))) : sr;
+    }
+    kids.forEach((c, i) => {
+      if(i === 0) return;
+      // i番目の札の左端は、直前の札の左端から「直前の札の種類（公開／裏）に応じた重ね幅」ぶん右
+      const step = (i - 1) < k ? sr : sb;
+      c.style.marginLeft = (step - mw) + "px";
+    });
   }
 
   // 現在成立している各役について、その役を構成している札のidをまとめて返す（表示順の並び替え用）
@@ -1417,7 +1630,7 @@ const VOICE_YAKU = {
   function renderCapturedRow(elId, list){
     const el = document.getElementById(elId);
     el.innerHTML = "";
-    el.classList.toggle("large", gameEnded);
+    el.classList.toggle("large", gameEnded && !LAYOUT.compact);
     orderCapturedForDisplay(list).forEach(def => { el.appendChild(cardEl(def)); });
   }
 
@@ -1460,6 +1673,7 @@ const VOICE_YAKU = {
       }
       return {};
     });
+    fitFieldGrid();
     renderRevealSlot();
     document.getElementById("fieldGrid").classList.toggle("discard-ready",
       currentPlayer === "you" && !gameEnded && !pendingFieldChoice && !revealingCard && selectedHandIdx !== null);
@@ -1890,9 +2104,15 @@ const VOICE_YAKU = {
       <div class="result-actions">
         <button type="button" class="result-btn" id="nextMonthBtn">次のゲームへ（${currentMonth % 12 + 1}月へ）</button>
         <button type="button" class="result-btn secondary" id="replayBtn">同じ手札・山札でリプレイ</button>
+        <button type="button" class="result-btn secondary compact-only" id="hideResultBtn">盤面を見る</button>
       </div>`;
     document.getElementById("nextMonthBtn").addEventListener("click", nextMonth);
     document.getElementById("replayBtn").addEventListener("click", replaySameDeal);
+    // 狭い画面では結果が全画面のパネルになるため、盤面（獲得札など）を見るために一時的に閉じられる
+    document.getElementById("hideResultBtn").addEventListener("click", () => {
+      box.style.display = "none";
+      document.getElementById("resultReopen").style.display = "block";
+    });
     setTurnIndicator("");
     renderAll();
   }
@@ -1900,10 +2120,114 @@ const VOICE_YAKU = {
   // 手札を選んだ状態で場札エリアの空きスペース（＝既存の場札そのものではない場所）をクリックすると、
   // その手札を場に出す（合う場札があってもあえて見送るケースも含む）
   document.getElementById("fieldGrid").addEventListener("click", (e) => {
-    if(e.target.closest(".card")) return;
+    if(e.target.closest(".card")){
+      // 狭い画面（タッチ操作）では、空きスペースを押したつもりが端末側のタップ位置補正で近くの札への
+      // タップとして届くことがある。合う場札が1枚も無く「捨てる」以外にできない時だけは、場の札を
+      // 押しても捨てる操作として扱う（PCの表示・操作は従来どおり）
+      if(!(LAYOUT.compact && isDiscardOnlyState())) return;
+    }
     onPlaceOnField();
   });
+  function isDiscardOnlyState(){
+    if(selectedHandIdx === null || gameEnded || currentPlayer !== "you" || pendingFieldChoice || revealingCard || heldPairs.length) return false;
+    const c = hands.you[selectedHandIdx];
+    return !!c && !field.some(f => cardsMatch(f, c));
+  }
 
+  // ==================== 画面サイズに合わせたレイアウト ====================
+  // PC（幅1240px以上かつ高さ800px以上）は従来の固定サイズ表示。それより狭い画面（スマホ・タブレット等）は
+  // compact表示：あなたの手札7枚が幅に収まり、かつ場札が縦に最低2〜3段（縦向き3段／横向き2段）入るよう、
+  // 札の大きさを画面の幅・高さから自動計算する（最小40px幅）。
+  function setCardSizes(cw, gap, cpuColW){
+    const st = document.querySelector(".board").style;
+    const px = (k, v) => st.setProperty(k, v + "px");
+    const ch = Math.round(cw * 109 / 76);
+    const mw = Math.round(cw * 0.62), mh = Math.round(mw * 109 / 76);          // CPUの手札（小）
+    const cmw = Math.max(16, Math.round(cw * 0.4)), cmh = Math.round(cmw * 109 / 76); // 取札（小）
+    const step = Math.max(6, Math.min(mw + 1, Math.floor((cpuColW - mw) / 6))); // CPU手札の重ね幅
+    const cstep = Math.max(5, Math.round(cmw * 0.55));                           // 取札の重ね幅
+    px("--cw", cw); px("--ch", ch); px("--mw", mw); px("--mh", mh);
+    px("--cmw", cmw); px("--cmh", cmh); px("--gap", gap); px("--step", step); px("--cstep", cstep);
+    CARD_W = cw; CARD_H = ch;
+    STACK_DX = Math.round(cw * 0.5); STACK_DY = Math.round(ch * 0.495);
+    STACK_DX_COMPACT = Math.round(cw * 0.395); STACK_DY_COMPACT = Math.round(ch * 0.33);
+  }
+
+  function applyLayout(){
+    const board = document.querySelector(".board");
+    const st = board.style;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    if(vw >= 1240 && vh >= 800){
+      board.classList.remove("compact", "portrait", "landscape");
+      ["--cw", "--ch", "--mw", "--mh", "--cmw", "--cmh", "--gap", "--step", "--cstep", "--side"].forEach(k => st.removeProperty(k));
+      CARD_W = 76; CARD_H = 109; STACK_DX = 38; STACK_DY = 54; STACK_DX_COMPACT = 30; STACK_DY_COMPACT = 36;
+      LAYOUT.compact = false; LAYOUT.mode = "full";
+      return;
+    }
+    const landscape = vw > vh;
+    board.classList.add("compact");
+    board.classList.toggle("landscape", landscape);
+    board.classList.toggle("portrait", !landscape);
+    LAYOUT.compact = true; LAYOUT.mode = landscape ? "landscape" : "portrait";
+    const cs = getComputedStyle(board);
+    const usableW = board.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const gap = 3, colGap = 6;
+    const sideW = landscape ? Math.max(150, Math.min(210, Math.floor(vw * 0.22))) : 0;
+    if(landscape) st.setProperty("--side", sideW + "px"); else st.removeProperty("--side");
+    const handW = landscape ? usableW - 2 * sideW - 2 * colGap : usableW;       // 手札7枚を並べられる幅
+    const cpuColW = landscape ? sideW : Math.floor((usableW - colGap) / 2);       // CPUの手札を並べる幅
+    const rowsNeeded = landscape ? 2 : 3;                                          // 場札を最低何段ぶん確保するか
+    const fieldArea = document.querySelector(".field-area");
+    const MIN_CW = 40;
+    let cw = Math.min(76, Math.floor((handW - 6 * gap) / 7));
+    for(;;){
+      setCardSizes(cw, gap, cpuColW);
+      const need = rowsNeeded * CARD_H + (rowsNeeded - 1) * 6;
+      if(fieldArea.clientHeight >= need || cw <= MIN_CW) break;
+      cw -= 2;
+    }
+    LAYOUT.cw = cw;
+    LAYOUT.cpuColW = cpuColW;
+  }
+
+  // 場札が極端に増えて場札エリアの高さ・幅を超えた時だけ、全体を縮小してはみ出しを防ぐ（安全策）
+  function fitFieldGrid(){
+    const wrap = document.querySelector("#fieldGridRows .field-row.wrap");
+    if(!wrap) return;
+    wrap.style.transform = "";
+    if(!LAYOUT.compact) return;
+    const grid = document.getElementById("fieldGrid");
+    const s = Math.min(1, grid.clientHeight / wrap.offsetHeight, grid.clientWidth / wrap.scrollWidth);
+    if(s < 0.999) wrap.style.transform = "scale(" + s + ")";
+  }
+
+  let layoutTimer = null;
+  function onViewportChange(){
+    if(layoutTimer) cancelAnimationFrame(layoutTimer);
+    layoutTimer = requestAnimationFrame(() => { applyLayout(); renderAll(); });
+  }
+  window.addEventListener("resize", onViewportChange);
+  window.addEventListener("orientationchange", onViewportChange);
+
+  // クレジット表記：狭い画面では「クレジット」ボタンで開閉する（表記そのものは常にDOMに残っている）
+  (function setupCredit(){
+    const credit = document.querySelector(".credit");
+    document.getElementById("creditBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      credit.classList.toggle("open");
+    });
+    document.addEventListener("click", (e) => {
+      if(credit.classList.contains("open") && !credit.contains(e.target)) credit.classList.remove("open");
+    });
+  })();
+
+  // 狭い画面：結果パネルを閉じて盤面を見ている間に出る「結果を見る」ボタンで、結果パネルに戻る
+  document.getElementById("resultReopen").addEventListener("click", () => {
+    document.getElementById("resultBox").style.display = "block";
+    document.getElementById("resultReopen").style.display = "none";
+  });
+
+  applyLayout();
   dealNewGame();
 </script>
 
