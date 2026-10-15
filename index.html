@@ -112,6 +112,22 @@
     border-radius:14px;
     white-space:nowrap;
   }
+  /* リプレイ（検証専用）を実行している間だけ表示する、表示専用のバッジ */
+  .replay-indicator{
+    position:absolute;
+    top:6px;
+    left:calc(50% - 150px);
+    z-index:50;
+    background:rgba(20,60,120,0.85);
+    border:1px solid var(--gold);
+    color:var(--gold);
+    font-size:13px;
+    font-weight:bold;
+    padding:3px 12px;
+    border-radius:20px;
+    white-space:nowrap;
+    display:none;
+  }
   .cpu-area{
     display:flex;
     flex-direction:column;
@@ -441,6 +457,7 @@
   .board.compact .sound-controls input[type="range"]{ width:48px; }
   .board.compact .month-indicator{ order:2; font-size:12px; padding:3px 10px; }
   .board.compact .multiplier-indicator{ order:3; font-size:12px; padding:2px 10px; }
+  .board.compact .replay-indicator{ order:3; font-size:12px; padding:2px 10px; }
   .board.compact .credit-btn{
     order:4;
     display:inline-block;
@@ -602,6 +619,7 @@
   <div class="toast-area" id="toastArea"></div>
   <div class="month-indicator" id="monthIndicator">1月</div>
   <div class="multiplier-indicator" id="multiplierIndicator"></div>
+  <div class="replay-indicator" id="replayIndicator" style="display:none;">リプレイ検証中</div>
   <div class="cumulative-indicator" id="cumulativeIndicator"></div>
   <button type="button" class="credit-btn" id="creditBtn" aria-label="クレジット表記を表示">クレジット</button>
   </div>
@@ -884,13 +902,15 @@ const VOICE_YAKU = {
       yaku.push({ name:"松桐坊主", points:30 });
     }
 
-    // 月見：芒に月＋菊に杯（柳の光札＝雨を持っていると、雨で流れて不成立になる）
+    // 月見：芒に月＋菊に杯／花見：桜に幕＋菊に杯（どちらも柳の光札＝雨を持っていると、雨で流れて不成立になる）
+    // 月見と花見が同時に成立したときは「呑み」30点だけにする（20+20にはしない）
     const hasSakazuki = cards.some(c => c.month === 9 && c.type === "tane");
-    if(hasSusukiHikari && hasSakazuki && !hasRainHikari) yaku.push({ name:"月見", points:20 });
-
-    // 花見：桜に幕＋菊に杯（同じく柳の光札＝雨を持っていると不成立になる）
     const hasMaku = hikari.some(c => c.month === 3);
-    if(hasMaku && hasSakazuki && !hasRainHikari) yaku.push({ name:"花見", points:20 });
+    const isTsukimi = hasSusukiHikari && hasSakazuki && !hasRainHikari;
+    const isHanami = hasMaku && hasSakazuki && !hasRainHikari;
+    if(isTsukimi && isHanami) yaku.push({ name:"呑み", points:30 });
+    else if(isTsukimi) yaku.push({ name:"月見", points:20 });
+    else if(isHanami) yaku.push({ name:"花見", points:20 });
 
     // 表菅原：松に鶴・梅に鶯・桜に幕の光札＋タネ札3枚（四光成立時だけ重複させない。五光成立時はOK）
     const hasUmeUguisu = cards.some(c => c.month === 2 && c.type === "tane");
@@ -905,10 +925,10 @@ const VOICE_YAKU = {
     if(hasInoshishi && hasShika && hasChou) yaku.push({ name:"猪鹿蝶", points:30 });
 
     const hasAkatan = [1, 2, 3].every(m => cards.some(c => c.month === m && c.type === "tanzaku"));
-    if(hasAkatan) yaku.push({ name:"赤短", points:20 });
+    if(hasAkatan) yaku.push({ name:"赤短", points:25 });
 
     const hasAotan = [6, 9, 10].every(m => cards.some(c => c.month === m && c.type === "tanzaku"));
-    if(hasAotan) yaku.push({ name:"青短", points:20 });
+    if(hasAotan) yaku.push({ name:"青短", points:25 });
 
     // 草：藤・菖蒲・萩の（無地の）短冊3枚を集める
     const hasKusa = [4, 5, 7].every(m => cards.some(c => c.month === m && c.type === "tanzaku"));
@@ -1123,6 +1143,113 @@ const VOICE_YAKU = {
   let cumulativeScores = { you:0, cpuA:0, cpuB:0 }; // 現在のクール（1〜12月）内の累計得点
   let monthContribution = { you:0, cpuA:0, cpuB:0 }; // 今の月枠で最後にcumulativeScoresへ反映した値（リプレイ時の二重加算防止用）
 
+  // ==================== リプレイ（検証専用） ====================
+  // リプレイ中は本番の変数・保存データを一切変更しない。そのため「配札直後（本番）」の状態を
+  // productionSnapshotに丸ごと退避しておき、リプレイ中はそこから独立して盤面を動かす。
+  // 「本番の結果に戻る」はこのスナップショットを書き戻すだけで、本番の点数・月には触れない。
+  let isReplaying = false;
+  let productionSnapshot = null;
+
+  function cloneJSON(v){ return v === null || v === undefined ? v : JSON.parse(JSON.stringify(v)); }
+  function setMapToPlain(m){ return { you:[...m.you], cpuA:[...m.cpuA], cpuB:[...m.cpuB] }; }
+  function plainToSetMap(m){ return { you:new Set(m.you), cpuA:new Set(m.cpuA), cpuB:new Set(m.cpuB) }; }
+
+  function updateReplayBanner(){
+    document.getElementById("replayIndicator").style.display = isReplaying ? "block" : "none";
+  }
+
+  // 本番（リプレイではない）対局がfinishRound()で終わった瞬間の状態を丸ごと保存する。
+  // 何度リプレイしても、ここに保存した内容だけが「本番の結果に戻る」の復元先になる
+  function captureProductionSnapshot(resultHtml){
+    productionSnapshot = {
+      board: {
+        deck: cloneJSON(deck),
+        hands: cloneJSON(hands),
+        field: cloneJSON(field),
+        captured: cloneJSON(captured),
+        selectedHandIdx,
+        pendingFieldChoice: cloneJSON(pendingFieldChoice),
+        revealingCard: cloneJSON(revealingCard),
+        heldPairs: cloneJSON(heldPairs),
+        justPlacedCard: cloneJSON(justPlacedCard),
+        luckyHitLog: cloneJSON(luckyHitLog),
+        lastOniActor,
+        currentPlayer,
+        gameEnded,
+        bonusYaku: cloneJSON(bonusYaku),
+        revealedHand: setMapToPlain(revealedHand),
+        fieldRecord,
+        turnHandDiscarded,
+        fieldMultiplier: cloneJSON(fieldMultiplier),
+        announcedYaku: setMapToPlain(announcedYaku)
+      },
+      season: {
+        currentMonth,
+        roles: cloneJSON(roles),
+        pendingRoles: cloneJSON(pendingRoles),
+        cumulativeScores: cloneJSON(cumulativeScores),
+        monthContribution: cloneJSON(monthContribution),
+        lastDealOrder: cloneJSON(lastDealOrder)
+      },
+      resultHtml
+    };
+  }
+
+  // 「本番の結果に戻る」：productionSnapshotから盤面・結果画面・累計/月をすべて復元する。
+  // 何回リプレイした後でも、本番の点数・月は最初にcaptureした時点のまま変わっていない
+  function restoreProductionSnapshot(){
+    if(!productionSnapshot) return;
+    const { board, season, resultHtml } = productionSnapshot;
+    deck = cloneJSON(board.deck);
+    hands = cloneJSON(board.hands);
+    field = cloneJSON(board.field);
+    captured = cloneJSON(board.captured);
+    selectedHandIdx = board.selectedHandIdx;
+    pendingFieldChoice = cloneJSON(board.pendingFieldChoice);
+    revealingCard = cloneJSON(board.revealingCard);
+    heldPairs = cloneJSON(board.heldPairs);
+    justPlacedCard = cloneJSON(board.justPlacedCard);
+    luckyHitLog = cloneJSON(board.luckyHitLog);
+    lastOniActor = board.lastOniActor;
+    currentPlayer = board.currentPlayer;
+    gameEnded = board.gameEnded;
+    bonusYaku = cloneJSON(board.bonusYaku);
+    revealedHand = plainToSetMap(board.revealedHand);
+    fieldRecord = board.fieldRecord;
+    turnHandDiscarded = board.turnHandDiscarded;
+    fieldMultiplier = cloneJSON(board.fieldMultiplier);
+    announcedYaku = plainToSetMap(board.announcedYaku);
+
+    currentMonth = season.currentMonth;
+    roles = cloneJSON(season.roles);
+    pendingRoles = cloneJSON(season.pendingRoles);
+    cumulativeScores = cloneJSON(season.cumulativeScores);
+    monthContribution = cloneJSON(season.monthContribution);
+    lastDealOrder = cloneJSON(season.lastDealOrder);
+
+    isReplaying = false;
+    updateReplayBanner();
+    document.getElementById("monthIndicator").textContent = currentMonth + "月";
+    renderRoles();
+    renderMultiplier();
+    renderCumulative();
+    const box = document.getElementById("resultBox");
+    box.style.display = "block";
+    box.innerHTML = resultHtml;
+    document.getElementById("nextMonthBtn").addEventListener("click", nextMonth);
+    document.getElementById("replayBtn").addEventListener("click", replaySameDeal);
+    const hideBtn = document.getElementById("hideResultBtn");
+    if(hideBtn){
+      hideBtn.addEventListener("click", () => {
+        box.style.display = "none";
+        document.getElementById("resultReopen").style.display = "block";
+      });
+    }
+    document.getElementById("resultReopen").style.display = "none";
+    setTurnIndicator("");
+    renderAll();
+  }
+
   // ==================== 手役・総ざらえ・場八〜場十二・配札時の4枚そろい ====================
   // これらの役はゲーム中に成立した時点で bonusYaku に記録しておき、ゲーム終了時に settleYaku() が
   // checkYaku() の役と一緒に精算する（フケ成立時はすべて無効）。
@@ -1187,8 +1314,9 @@ const VOICE_YAKU = {
     return list;
   }
 
-  // 配札直後の手札7枚で手役を判定する（鬼札は11月の札として数える）。手役は1人1つまで、
-  // 四三 > 手四 > くっつき の優先順。4枚そろった月は「2組」とは数えない。
+  // 配札直後の手札7枚で手役を判定する（鬼札は11月の札として数える）。手役は1人1つまで。
+  // 7枚の月の分け方（4+3／4+…／3+3+1／3+2+2／2+2+2+1）がそれぞれ違うので、2つ以上が同時に成立することはない。
+  // 4枚そろった月は「2組」とは数えない。
   // 戻り値：{ name, points, ids（表向きに公開する札のid） } または null
   function detectHandYaku(hand){
     const byMonth = {};
@@ -1200,12 +1328,21 @@ const VOICE_YAKU = {
       if(hasThree) return { name:"四三", points:70, ids:hand.map(c => c.id) };
       return { name:"手四", points:40, ids:byMonth[fourMonth].map(c => c.id) };
     }
-    // くっつき：同じ月2枚×3組＋残り1枚（2+2+2+1）のときだけ。3枚ある月を含む形（3+2+2など）は不成立
+    // ツーセット（3+3+1）：同じ月3枚×2組＋別の1枚。3枚の組6枚を公開する
+    const threeMonths = months.filter(m => byMonth[m].length === 3);
+    if(threeMonths.length === 2){
+      return { name:"ツーセット", points:30, ids:threeMonths.flatMap(m => byMonth[m].map(c => c.id)) };
+    }
+    // くっつき：同じ月2枚×3組＋残り1枚（2+2+2+1）。3枚ある月を含む形は下のフルハウス（3+2+2）・上のツーセット（3+3+1）になる
     const pairMonths = months.filter(m => byMonth[m].length === 2);
     if(pairMonths.length === 3 && months.length === 4){
       const ids = [];
       pairMonths.forEach(m => { ids.push(byMonth[m][0].id, byMonth[m][1].id); });
       return { name:"くっつき", points:30, ids };
+    }
+    // フルハウス（3+2+2）：同じ月3枚＋同じ月2枚×2組。7枚すべてを公開する
+    if(threeMonths.length === 1 && pairMonths.length === 2){
+      return { name:"フルハウス", points:25, ids:hand.map(c => c.id) };
     }
     return null;
   }
@@ -1372,12 +1509,22 @@ const VOICE_YAKU = {
       roles = pendingRoles;
       pendingRoles = null;
     }
+    isReplaying = false;
+    updateReplayBanner();
     dealNewGame();
   }
 
-  // 「同じ配牌でリプレイ」：月は変えず、直前のゲームと全く同じ配牌・同じ山でもう一度やり直す
+  // 「同じ手札・山札でリプレイ」：検証専用。本番の配牌をそのまま再現して独立に対局し直すが、
+  // 累計点・月・保存データなど本番側の状態には一切触れない（isReplayingで各所を分岐させる）。
+  // リプレイは lastDealOrder＋productionSnapshotの月・役割から決定的に再現する：
+  // 「配札〜結果画面の間は月・役割が変わらない」という暗黙の前提に頼らず、dealNewGame()を呼ぶ
+  // 前にproductionSnapshot.seasonのcurrentMonth・rolesを明示的に書き戻してから配り直す
   function replaySameDeal(){
-    if(!lastDealOrder) return;
+    if(!lastDealOrder || !productionSnapshot) return;
+    currentMonth = productionSnapshot.season.currentMonth;
+    roles = cloneJSON(productionSnapshot.season.roles);
+    isReplaying = true;
+    updateReplayBanner();
     dealNewGame(lastDealOrder);
   }
 
@@ -1541,11 +1688,14 @@ const VOICE_YAKU = {
       groups.push({ points:30, ids:[matsuH.id, kiriH.id, susukiH.id] });
     }
 
+    // 月見・花見（両方そろえば呑み30点。芒の光・桜の光・菊に杯の3枚を1つのまとまりにする）
     const sakazuki = cards.find(c => c.month === 9 && c.type === "tane");
-    if(susukiH && sakazuki && !hasRainHikari) groups.push({ points:20, ids:[susukiH.id, sakazuki.id] });
-
     const makuH = hikari.find(c => c.month === 3);
-    if(makuH && sakazuki && !hasRainHikari) groups.push({ points:20, ids:[makuH.id, sakazuki.id] });
+    const tsukimi = susukiH && sakazuki && !hasRainHikari;
+    const hanami = makuH && sakazuki && !hasRainHikari;
+    if(tsukimi && hanami) groups.push({ points:30, ids:[susukiH.id, makuH.id, sakazuki.id] });
+    else if(tsukimi) groups.push({ points:20, ids:[susukiH.id, sakazuki.id] });
+    else if(hanami) groups.push({ points:20, ids:[makuH.id, sakazuki.id] });
 
     // 表菅原：松の光＋梅に鶯＋桜の光の3枚。四光成立時だけ重複させない（五光成立時はOK）
     const hasUmeUguisu = cards.find(c => c.month === 2 && c.type === "tane");
@@ -1560,10 +1710,10 @@ const VOICE_YAKU = {
     if(inoshishi && shika && chou) groups.push({ points:30, ids:[inoshishi.id, shika.id, chou.id] });
 
     const akatanCards = [1, 2, 3].map(m => cards.find(c => c.month === m && c.type === "tanzaku"));
-    if(akatanCards.every(Boolean)) groups.push({ points:20, ids:akatanCards.map(c => c.id) });
+    if(akatanCards.every(Boolean)) groups.push({ points:25, ids:akatanCards.map(c => c.id) });
 
     const aotanCards = [6, 9, 10].map(m => cards.find(c => c.month === m && c.type === "tanzaku"));
-    if(aotanCards.every(Boolean)) groups.push({ points:20, ids:aotanCards.map(c => c.id) });
+    if(aotanCards.every(Boolean)) groups.push({ points:25, ids:aotanCards.map(c => c.id) });
 
     const kusaCards = [4, 5, 7].map(m => cards.find(c => c.month === m && c.type === "tanzaku"));
     if(kusaCards.every(Boolean)) groups.push({ points:15, ids:kusaCards.map(c => c.id) });
@@ -2056,12 +2206,15 @@ const VOICE_YAKU = {
     const box = document.getElementById("resultBox");
     box.style.display = "block";
     const { finalScores, breakdown } = settleYaku();
-    // 同じ月枠をリプレイしてから次のゲームへ進んでも二重加算されないよう、差分だけを累計に足す
-    ["you", "cpuA", "cpuB"].forEach(p => {
-      cumulativeScores[p] += finalScores[p] - monthContribution[p];
-      monthContribution[p] = finalScores[p];
-    });
-    renderCumulative();
+    // リプレイ中は累計点・次の役割・シーズンボーナスなど、本番側の状態を一切更新しない
+    if(!isReplaying){
+      // 同じ月枠をリプレイしてから次のゲームへ進んでも二重加算されないよう、差分だけを累計に足す
+      ["you", "cpuA", "cpuB"].forEach(p => {
+        cumulativeScores[p] += finalScores[p] - monthContribution[p];
+        monthContribution[p] = finalScores[p];
+      });
+      renderCumulative();
+    }
     const label = { you:"あなた", cpuA:"CPU-A", cpuB:"CPU-B" };
     // 順位付け：同点の場合は同順位とし、次の順位はその人数分スキップする
     const ranked = ["you", "cpuA", "cpuB"].slice().sort((a, b) => finalScores[b] - finalScores[a]);
@@ -2071,13 +2224,14 @@ const VOICE_YAKU = {
     });
     if(ranks.you === 1) playSfx("fanfare");
     const isFuke = !!breakdown.fukeWinner;
-    // 次のゲーム（「次のゲームへ」クリック時）の親・胴二・引きを、この対局結果から決めておく
-    pendingRoles = computeNextRoles(finalScores, breakdown);
+    // 次のゲーム（「次のゲームへ」クリック時）の親・胴二・引きを、この対局結果から決めておく（本番のみ）
+    if(!isReplaying) pendingRoles = computeNextRoles(finalScores, breakdown);
     // 12月の対局が終わった＝1クールの最終回の場合のみ、シーズンボーナスを計算する
-    // （cumulativeScoresには加算しない。あくまでその場で表示するための値）
-    const seasonBonus = currentMonth === 12 ? computeSeasonBonus(cumulativeScores) : null;
+    // （cumulativeScoresには加算しない。あくまでその場で表示するための値。リプレイ中は計算しない）
+    const seasonBonus = (!isReplaying && currentMonth === 12) ? computeSeasonBonus(cumulativeScores) : null;
     const seasonBanner = seasonBonus ?
-      `<div class="season-banner">🏆 1クール終了！ 優勝：${label[rankBySeasonScore(cumulativeScores)[0]]}</div>` : "";
+      `<div class="season-banner">🏆 1クール終了！ 優勝：${label[rankBySeasonScore(cumulativeScores)[0]]}</div>` :
+      (isReplaying ? `<div class="season-banner">🔍 検証結果（リプレイ）：本番の記録には反映されません</div>` : "");
     const playerBlocks = ["you", "cpuA", "cpuB"].map(p => {
       const b = breakdown[p];
       const itemLines = b.items.map(it => `<div class="breakdown-line">${it.text}</div>`).join("");
@@ -2091,23 +2245,34 @@ const VOICE_YAKU = {
       const seasonLines = seasonBonus ? `
         <div class="breakdown-line">ボーナス ${seasonBonus[p] >= 0 ? "+" : ""}${seasonBonus[p]}点</div>
         <div class="breakdown-line">シーズン合計 ${cumulativeScores[p] + seasonBonus[p]}点</div>` : "";
+      // リプレイ中は累計・次の役割の行を出さない（本番の状態を反映していないため）
+      const productionLines = isReplaying ? "" : `
+        <div class="breakdown-line">累計 ${cumulativeScores[p]}点</div>${seasonLines}
+        <div class="breakdown-line">次は${pendingRoles[p]}</div>`;
       return `<div class="breakdown-block">
         <div class="breakdown-name">${label[p]}<span class="breakdown-rank">${ranks[p]}位</span></div>
         <div class="breakdown-line">獲得点数 ${b.captured}</div>
         ${itemLines}${subtotalLines}${multLine}
-        <div class="breakdown-final">最終 ${b.final}点</div>
-        <div class="breakdown-line">累計 ${cumulativeScores[p]}点</div>${seasonLines}
-        <div class="breakdown-line">次は${pendingRoles[p]}</div>
+        <div class="breakdown-final">最終 ${b.final}点</div>${productionLines}
       </div>`;
     }).join("");
-    box.innerHTML = `${seasonBanner}<div class="breakdown-row">${playerBlocks}</div>
-      <div class="result-actions">
+    const actionsHtml = isReplaying ?
+      `<div class="result-actions">
+        <button type="button" class="result-btn" id="backToProductionBtn">本番の結果に戻る</button>
+        <button type="button" class="result-btn secondary compact-only" id="hideResultBtn">盤面を見る</button>
+      </div>` :
+      `<div class="result-actions">
         <button type="button" class="result-btn" id="nextMonthBtn">次のゲームへ（${currentMonth % 12 + 1}月へ）</button>
         <button type="button" class="result-btn secondary" id="replayBtn">同じ手札・山札でリプレイ</button>
         <button type="button" class="result-btn secondary compact-only" id="hideResultBtn">盤面を見る</button>
       </div>`;
-    document.getElementById("nextMonthBtn").addEventListener("click", nextMonth);
-    document.getElementById("replayBtn").addEventListener("click", replaySameDeal);
+    box.innerHTML = `${seasonBanner}<div class="breakdown-row">${playerBlocks}</div>${actionsHtml}`;
+    if(isReplaying){
+      document.getElementById("backToProductionBtn").addEventListener("click", restoreProductionSnapshot);
+    } else {
+      document.getElementById("nextMonthBtn").addEventListener("click", nextMonth);
+      document.getElementById("replayBtn").addEventListener("click", replaySameDeal);
+    }
     // 狭い画面では結果が全画面のパネルになるため、盤面（獲得札など）を見るために一時的に閉じられる
     document.getElementById("hideResultBtn").addEventListener("click", () => {
       box.style.display = "none";
@@ -2115,6 +2280,9 @@ const VOICE_YAKU = {
     });
     setTurnIndicator("");
     renderAll();
+    // 本番（リプレイではない）対局が終わった直後の状態を、この結果画面のHTMLごと退避しておく。
+    // 以降何回リプレイしても、「本番の結果に戻る」は必ずこの時点の内容に戻す
+    if(!isReplaying) captureProductionSnapshot(box.innerHTML);
   }
 
   // 手札を選んだ状態で場札エリアの空きスペース（＝既存の場札そのものではない場所）をクリックすると、
