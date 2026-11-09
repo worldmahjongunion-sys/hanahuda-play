@@ -1942,11 +1942,12 @@ const VOICE_YAKU = {
   }
 
   // 3人分の置き方を、決められた札の大きさsで試す。入る置き方があれば各自の位置を返す
-  //   A：あなたは下に横幅いっぱい、CPU-A・CPU-Bはその上の左右に列で
-  //   B：CPU-A・CPU-Bは左右に縦いっぱいの列で、あなたはその間の下に
-  //   C：あなたは下に横幅いっぱい、CPU-A・CPU-Bはその上の左右に段で（中央寄り＝下）
+  // mode "rows"（優先）：3人とも段（横の行）を積み重ねる。あなたは下に横幅いっぱい（中央寄り＝上）、
+  //   CPU-A・CPU-Bは上の左右（中央寄り＝下）。結果パネルは CPU の間（上の中央）か、CPU とあなたの間に置く
+  // mode "cols"（行では札が小さくなりすぎる時）：CPU は列（縦）で左右に並べる
+  //   A：あなたは下に横幅いっぱい、CPU はその上の左右／B：CPU は左右に縦いっぱい、あなたはその間の下
   // reserve（{w,h}）を渡すと、卓の中央（3人の札に囲まれた空き）にその大きさの場所も確保し、位置を panel で返す
-  function cvTryLayouts(bands, area, s, reserve){
+  function cvTryLayouts(bands, area, s, reserve, mode){
     const LH = 20, ZG = 14, NAME_W = 110;
     const rw = reserve ? reserve.w : 0, rh = reserve ? reserve.h : 0;
     const zone = (block, x, y, alignRight) => ({ block, x, y, alignRight });
@@ -1954,6 +1955,30 @@ const VOICE_YAKU = {
     const you = cvRows(bands.you, area.w, s);
     const upperH = you ? area.h - (you.h + LH) - ZG : -1;
     const youZone = (left, width) => zone(you, left + Math.max(0, (width - you.w) / 2), area.y + area.h - you.h, false);
+    if(mode === "rows"){
+      if(!you || upperH < LH) return null;
+      const place = (a, b, panel) => ({ you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false),
+                                        cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true), panel });
+      // CPU の間（上の中央）にパネル
+      if(reserve && upperH >= rh){
+        const sideW = (area.w - rw - ZG * 2) / 2;
+        const a = sideW > 0 ? cvRows(bands.cpuA.slice().reverse(), sideW, s) : null;
+        const b = sideW > 0 ? cvRows(bands.cpuB.slice().reverse(), sideW, s) : null;
+        if(a && b && Math.max(a.h, b.h) + LH <= upperH){
+          return place(a, b, center(area.x + sideW + ZG, rw, area.y, Math.min(upperH, Math.max(rh, Math.max(a.h, b.h) + LH))));
+        }
+      }
+      // CPU の下（あなたとの間）にパネル。パネルが無い時はこの形
+      if(area.w >= rw){
+        const halfW = (area.w - ZG) / 2;
+        const a = cvRows(bands.cpuA.slice().reverse(), halfW, s);
+        const b = cvRows(bands.cpuB.slice().reverse(), halfW, s);
+        const cpuH = a && b ? Math.max(a.h, b.h) + LH : 0;
+        const spaceH = upperH - cpuH - (reserve ? ZG : 0);
+        if(a && b && spaceH >= rh) return place(a, b, center(area.x, area.w, area.y + cpuH + ZG, spaceH));
+      }
+      return null;
+    }
     if(you && upperH >= Math.max(LH, rh)){
       const a = cvCols(bands.cpuA, upperH - LH, s, true);
       const b = cvCols(bands.cpuB, upperH - LH, s, false);
@@ -1981,28 +2006,22 @@ const VOICE_YAKU = {
         }
       }
     }
-    if(you && upperH >= LH && area.w >= rw){
-      const halfW = (area.w - ZG) / 2;
-      const a = cvRows(bands.cpuA.slice().reverse(), halfW, s);
-      const b = cvRows(bands.cpuB.slice().reverse(), halfW, s);
-      const cpuH = a && b ? Math.max(a.h, b.h) + LH : 0;
-      const spaceH = upperH - cpuH - (reserve ? ZG : 0);
-      if(a && b && spaceH >= rh){
-        return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true),
-                 panel:center(area.x, area.w, area.y + cpuH + ZG, spaceH) };
-      }
-    }
     return null;
   }
 
   function cvSizes(cw){
     return { cw, ch:Math.round(cw * 109 / 76), g:Math.max(2, Math.round(cw * 0.05)), gg:Math.max(6, Math.round(cw * 0.12)), bg:Math.max(10, Math.round(cw * 0.22)) };
   }
+  // 3人とも横の行で並べて札の幅が CV_MIN_CW_ROWS 以上取れるなら、それを使う。取れない画面だけ CPU を縦の列にする
+  const CV_MIN_CW_ROWS = 30;
   function cvFindLayout(bands, area, reserve, minCw){
-    for(let cw = 140; cw >= minCw; cw--){
-      const s = cvSizes(cw);
-      const zones = cvTryLayouts(bands, area, s, reserve);
-      if(zones) return { s, zones };
+    for(const mode of ["rows", "cols"]){
+      const lowest = mode === "rows" ? Math.max(minCw, CV_MIN_CW_ROWS) : minCw;
+      for(let cw = 140; cw >= lowest; cw--){
+        const s = cvSizes(cw);
+        const zones = cvTryLayouts(bands, area, s, reserve, mode);
+        if(zones) return { s, zones };
+      }
     }
     return null;
   }
