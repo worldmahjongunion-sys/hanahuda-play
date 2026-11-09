@@ -147,12 +147,11 @@
     opacity:0.9;
     vertical-align:middle;
   }
-  .role-tag.role-oya{
-    background:var(--gold);
-    color:var(--felt-dark);
-    font-weight:bold;
-    opacity:1;
-  }
+  /* 役割の色分け：親=青・胴二=黄・引き=赤（塗りつぶし＋文字で、緑の卓の上でも見分けやすく） */
+  .role-tag.role-oya, .role-tag.role-doni, .role-tag.role-hiki{ font-weight:bold; opacity:1; }
+  .role-tag.role-oya{ background:#2f6fd8; border-color:#9cc1ff; color:#fff; }
+  .role-tag.role-doni{ background:#f4c430; border-color:#fff1b0; color:#2a2000; }
+  .role-tag.role-hiki{ background:#d8343c; border-color:#ffa9ad; color:#fff; }
   /* 対局終了後は左右のCPU-area幅を50%ずつに固定し、取札・役バッジをそれぞれの端に寄せられるようにする */
   .board.ended .cpu-area{ flex:1 1 0; min-width:0; }
 
@@ -409,6 +408,9 @@
   .cv-title, .cv-zone-label, .cv-yaku-label{ position:absolute; white-space:nowrap; font-weight:bold; }
   .cv-title{ top:12px; left:12px; font-size:15px; color:var(--gold); }
   .cv-zone-label{ font-size:13px; line-height:18px; color:var(--gold); }
+  .live-score .cum-score{ font-weight:normal; color:var(--text-light); }
+  /* 累計は各自の得点の横に出すので、上部の「累計 あなた… / CPU-A… / CPU-B…」の1行は出さない */
+  .cumulative-indicator{ display:none !important; }
   .cv-zone-label .cv-pts{ color:var(--text-light); font-weight:normal; margin-left:6px; }
   .cv-yaku-label{
     font-size:11px;
@@ -1484,8 +1486,12 @@ const VOICE_YAKU = {
     return bonus;
   }
 
+  // 役割の表示に使う色のクラス（親=青・胴二=黄・引き=赤）。盤面の名前の横と結果パネルの「次は〜」で共通
+  function roleTagClass(r){
+    return "role-tag " + ({ "親":"role-oya", "胴二":"role-doni", "引き":"role-hiki" }[r] || "");
+  }
   function renderRoles(){
-    const roleClass = r => r === "親" ? "role-tag role-oya" : "role-tag";
+    const roleClass = roleTagClass;
     ["you", "cpuA", "cpuB"].forEach(p => {
       const suffix = p === "you" ? "You" : (p === "cpuA" ? "CpuA" : "CpuB");
       const el = document.getElementById("roleTag" + suffix);
@@ -1631,7 +1637,8 @@ const VOICE_YAKU = {
       const row = document.createElement("div");
       row.className = "field-row" + (LAYOUT.compact ? " wrap" : "");
       rowEntries.forEach(entry => {
-        const layers = entry.isStuck ? entry.cards : [entry];
+        // 重ねる順は entry.view（場にあった札が下、あとから合わせた札ほど上）。無い束は cards の順
+        const layers = entry.isStuck ? (entry.view || entry.cards) : [entry];
         const o = entry.__held ? {} : (optsFn ? optsFn(entry) : {});
         const n = layers.length;
         // 4枚以上の束（配札時の4枚そろい・5枚の張り付きなど）は、場札エリアからはみ出さないよう
@@ -2104,7 +2111,7 @@ const VOICE_YAKU = {
     const zoneOf = { you:zones.you, [seat.left]:zones.left, [seat.right]:zones.right };
     players.forEach(p => {
       const z = zoneOf[p];
-      const name = `${PLAYER_LABEL[p]}<span class="cv-pts">${totalPoints(captured[p])}点</span>`;
+      const name = `${PLAYER_LABEL[p]}<span class="cv-pts">${totalPoints(captured[p])}点 / 累計 ${fmtCumulative(cumulativeScores[p])}</span>`;
       const ly = z.y - 20;
       if(z.alignRight) add("cv-zone-label", name, 0, ly, W - (z.x + z.block.w));
       else add("cv-zone-label", name, z.x, ly);
@@ -2123,6 +2130,10 @@ const VOICE_YAKU = {
     });
   }
 
+  function fmtCumulative(v){ return (v >= 0 ? "+" : "") + v; }
+  function liveScoreHtml(p){
+    return `${totalPoints(captured[p])}点<span class="cum-score"> / 累計 ${fmtCumulative(cumulativeScores[p])}</span>`;
+  }
   function renderAll(){
     applySeats();
     document.querySelector(".board").classList.toggle("ended", gameEnded);
@@ -2171,9 +2182,10 @@ const VOICE_YAKU = {
     renderCapturedRow("capturedCpuA", captured.cpuA);
     renderCapturedRow("capturedCpuB", captured.cpuB);
     // 手札横に、各自の獲得点数をその都度表示する
-    document.getElementById("liveScoreYou").textContent = totalPoints(captured.you) + "点";
-    document.getElementById("liveScoreCpuA").textContent = totalPoints(captured.cpuA) + "点";
-    document.getElementById("liveScoreCpuB").textContent = totalPoints(captured.cpuB) + "点";
+    // 今月の得点の横に、そのプレイヤーの累計（本番の値。リプレイ中も変わらない）を並べる
+    document.getElementById("liveScoreYou").innerHTML = liveScoreHtml("you");
+    document.getElementById("liveScoreCpuA").innerHTML = liveScoreHtml("cpuA");
+    document.getElementById("liveScoreCpuB").innerHTML = liveScoreHtml("cpuB");
     // 役が成立した時点で、獲得札の前に役名＋点数を表示する
     renderLiveYaku("yakuLiveYou", "you", captured.you);
     renderLiveYaku("yakuLiveCpuA", "cpuA", captured.cpuA);
@@ -2270,11 +2282,12 @@ const VOICE_YAKU = {
     const month = special ? null : (wasStuck ? matchedEntry.month : (matchedEntry.isOni ? handCard.month : matchedEntry.month));
     const pendingCards = matchedEntry.isStuck ? [...matchedEntry.cards, handCard] : [handCard, matchedEntry];
     if(handCard.isOni || matchedEntry.isOni) lastOniActor = player;
-    const held = { isStuck:true, month, cards:pendingCards, id:"held_hand_" + handCard.id, __held:true };
+    const pendingView = [...(matchedEntry.isStuck ? (matchedEntry.view || matchedEntry.cards) : [matchedEntry]), handCard];
+    const held = { isStuck:true, month, cards:pendingCards, view:pendingView, id:"held_hand_" + handCard.id, __held:true };
     if(matchedEntry.lock === "oni") held.bonus = { name:`${matchedEntry.month}月四枚`, points:totalPoints(matchedEntry.cards) };
     heldPairs.push(held);
     renderAll();
-    setTimeout(() => drawPhase(player, { pendingCards, wasStuck, month, handOni:!!handCard.isOni }), STEP_PAUSE_MS);
+    setTimeout(() => drawPhase(player, { pendingCards, pendingView, wasStuck, month, handOni:!!handCard.isOni }), STEP_PAUSE_MS);
   }
 
   // 山札から1枚めくり、場札スペースの上に0.8秒見せてから、行き先の確定処理（processDrawnCard）へ進む
@@ -2309,7 +2322,7 @@ const VOICE_YAKU = {
           playSfx("stuck");
           heldPairs = [];
           revealingCard = null;
-          field.push({ isStuck:true, month:matchContext.month, cards:[...matchContext.pendingCards, drawn], id:"stuck_" + drawn.id });
+          field.push({ isStuck:true, month:matchContext.month, cards:[...matchContext.pendingCards, drawn], view:[...matchContext.pendingView, drawn], id:"stuck_" + drawn.id });
           if(player === "you") setTurnIndicator("張り付き！ 3枚が場に残りました");
           finalizeTurn(player);
           return;
@@ -2321,7 +2334,7 @@ const VOICE_YAKU = {
         playSfx("stuck");
         heldPairs = [];
         revealingCard = null;
-        field.push({ isStuck:true, lock:"sealed", month:matchContext.month, cards:[...matchContext.pendingCards, drawn], id:"sealed_" + drawn.id });
+        field.push({ isStuck:true, lock:"sealed", month:matchContext.month, cards:[...matchContext.pendingCards, drawn], view:[...matchContext.pendingView, drawn], id:"sealed_" + drawn.id });
         if(player === "you") setTurnIndicator("張り付き！ 5枚が場に残りました");
         finalizeTurn(player);
         return;
@@ -2363,7 +2376,7 @@ const VOICE_YAKU = {
     // （resolvePlayAndDraw()と同じ理由：鬼札のmonth:11でラベル付けすると誤って張り付き判定される）
     const month = target.isStuck ? target.month : (target.isOni ? drawn.month : target.month);
     if(target.isOni) lastOniActor = player;
-    const held = { isStuck:true, month, cards:[drawn, ...targetCards], id:"held_drawn_" + drawn.id, __held:true };
+    const held = { isStuck:true, month, cards:[drawn, ...targetCards], view:[...(target.isStuck ? (target.view || targetCards) : [target]), drawn], id:"held_drawn_" + drawn.id, __held:true };
     if(target.lock === "oni") held.bonus = { name:`${target.month}月四枚`, points:totalPoints(target.cards) };
     heldPairs.push(held);
     playSfx(isLucky ? "lucky" : "match");
@@ -2589,7 +2602,7 @@ const VOICE_YAKU = {
       // リプレイ中は累計・次の役割の行を出さない（本番の状態を反映していないため）
       const productionLines = isReplaying ? "" : `
         <div class="breakdown-line">累計 ${cumulativeScores[p]}点</div>${seasonLines}
-        <div class="breakdown-line">次は${pendingRoles[p]}</div>`;
+        <div class="breakdown-line">次は<span class="${roleTagClass(pendingRoles[p])}">${pendingRoles[p]}</span></div>`;
       return `<div class="breakdown-block">
         <div class="breakdown-name">${label[p]}<span class="breakdown-rank">${ranks[p]}位</span></div>
         <div class="breakdown-line">獲得点数 ${b.captured}</div>
