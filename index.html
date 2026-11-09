@@ -400,6 +400,35 @@
   }
   .result-btn.secondary:hover{ background:rgba(255,255,255,0.15); }
 
+  /* 対局終了後の取札表示（「盤面を見る」で開き、「結果を見る」で結果パネルに戻る）。
+     画面全体を使い、札の大きさ・位置は renderCapturedView() が画面サイズから計算して直接指定する */
+  .captured-view{
+    display:none;
+    position:fixed;
+    inset:0;
+    z-index:140;
+    overflow:hidden;
+    background:radial-gradient(ellipse at center, var(--felt) 0%, var(--felt-dark) 100%);
+  }
+  .captured-view.open{ display:block; }
+  .captured-view .card{ position:absolute; border-radius:4px; }
+  .captured-view .card svg{ border-radius:4px; }
+  .cv-title, .cv-zone-label, .cv-yaku-label{ position:absolute; white-space:nowrap; font-weight:bold; }
+  .cv-title{ top:12px; left:12px; font-size:15px; color:var(--gold); }
+  .cv-zone-label{ font-size:13px; line-height:18px; color:var(--gold); }
+  .cv-zone-label .cv-pts{ color:var(--text-light); font-weight:normal; margin-left:6px; }
+  .cv-yaku-label{
+    font-size:11px;
+    line-height:14px;
+    height:16px;
+    padding:0 5px;
+    color:var(--gold);
+    background:rgba(216,180,90,0.18);
+    border:1px solid var(--gold);
+    border-radius:6px;
+  }
+  body.cv-open .result-reopen{ top:8px; bottom:auto; }
+
   /* 手役で公開した札（自分・CPUとも）の縁取り */
   .card.revealed{ box-shadow:0 0 0 2px var(--gold), 0 2px 4px rgba(0,0,0,0.45); }
   /* 役が成立した時の通知（「CPU-A 手四 成立!」など）。数秒で自動的に消える */
@@ -663,6 +692,7 @@
     </div>
   </div>
   <button type="button" class="result-btn result-reopen" id="resultReopen">結果を見る</button>
+  <div class="captured-view" id="capturedView"></div>
   <div class="credit">
     札の絵柄: <a href="https://commons.wikimedia.org/wiki/User:Louiemantia" target="_blank" rel="noopener">Louiemantia</a>
     (<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a>), via Wikimedia Commons<br>
@@ -1244,6 +1274,7 @@ const VOICE_YAKU = {
       hideBtn.addEventListener("click", () => {
         box.style.display = "none";
         document.getElementById("resultReopen").style.display = "block";
+        renderCapturedView();
       });
     }
     document.getElementById("resultReopen").style.display = "none";
@@ -1676,17 +1707,17 @@ const VOICE_YAKU = {
     let mainLightPoints = null;
     if(hikari.length === 5){
       mainLightPoints = 120;
-      groups.push({ points:120, ids:hikari.map(c => c.id) });
+      groups.push({ name:"五光", points:120, ids:hikari.map(c => c.id) });
     } else if(hikari.length === 4 && !hasRainHikari){
       mainLightPoints = 60;
-      groups.push({ points:60, ids:hikari.map(c => c.id) });
+      groups.push({ name:"四光", points:60, ids:hikari.map(c => c.id) });
     }
 
     const matsuH = hikari.find(c => c.month === 1);
     const kiriH = hikari.find(c => c.month === 12);
     const susukiH = hikari.find(c => c.month === 8);
     if(matsuH && kiriH && susukiH && !mainLightPoints && !hasRainHikari){
-      groups.push({ points:30, ids:[matsuH.id, kiriH.id, susukiH.id] });
+      groups.push({ name:"松桐坊主", points:30, ids:[matsuH.id, kiriH.id, susukiH.id] });
     }
 
     // 月見・花見（両方そろえば呑み30点。芒の光・桜の光・菊に杯の3枚を1つのまとまりにする）
@@ -1694,30 +1725,30 @@ const VOICE_YAKU = {
     const makuH = hikari.find(c => c.month === 3);
     const tsukimi = susukiH && sakazuki && !hasRainHikari;
     const hanami = makuH && sakazuki && !hasRainHikari;
-    if(tsukimi && hanami) groups.push({ points:30, ids:[susukiH.id, makuH.id, sakazuki.id] });
-    else if(tsukimi) groups.push({ points:20, ids:[susukiH.id, sakazuki.id] });
-    else if(hanami) groups.push({ points:20, ids:[makuH.id, sakazuki.id] });
+    if(tsukimi && hanami) groups.push({ name:"呑み", points:30, ids:[susukiH.id, makuH.id, sakazuki.id] });
+    else if(tsukimi) groups.push({ name:"月見", points:20, ids:[susukiH.id, sakazuki.id] });
+    else if(hanami) groups.push({ name:"花見", points:20, ids:[makuH.id, sakazuki.id] });
 
     // 表菅原：松の光＋梅に鶯＋桜の光の3枚。四光成立時だけ重複させない（五光成立時はOK）
     const hasUmeUguisu = cards.find(c => c.month === 2 && c.type === "tane");
     const isShikoOnly = mainLightPoints === 60;
     if(matsuH && hasUmeUguisu && makuH && !isShikoOnly){
-      groups.push({ points:20, ids:[matsuH.id, hasUmeUguisu.id, makuH.id] });
+      groups.push({ name:"表菅原", points:20, ids:[matsuH.id, hasUmeUguisu.id, makuH.id] });
     }
 
     const inoshishi = cards.find(c => c.month === 7 && c.type === "tane");
     const shika = cards.find(c => c.month === 10 && c.type === "tane");
     const chou = cards.find(c => c.month === 6 && c.type === "tane");
-    if(inoshishi && shika && chou) groups.push({ points:30, ids:[inoshishi.id, shika.id, chou.id] });
+    if(inoshishi && shika && chou) groups.push({ name:"猪鹿蝶", points:30, ids:[inoshishi.id, shika.id, chou.id] });
 
     const akatanCards = [1, 2, 3].map(m => cards.find(c => c.month === m && c.type === "tanzaku"));
-    if(akatanCards.every(Boolean)) groups.push({ points:25, ids:akatanCards.map(c => c.id) });
+    if(akatanCards.every(Boolean)) groups.push({ name:"赤短", points:25, ids:akatanCards.map(c => c.id) });
 
     const aotanCards = [6, 9, 10].map(m => cards.find(c => c.month === m && c.type === "tanzaku"));
-    if(aotanCards.every(Boolean)) groups.push({ points:25, ids:aotanCards.map(c => c.id) });
+    if(aotanCards.every(Boolean)) groups.push({ name:"青短", points:25, ids:aotanCards.map(c => c.id) });
 
     const kusaCards = [4, 5, 7].map(m => cards.find(c => c.month === m && c.type === "tanzaku"));
-    if(kusaCards.every(Boolean)) groups.push({ points:15, ids:kusaCards.map(c => c.id) });
+    if(kusaCards.every(Boolean)) groups.push({ name:"草", points:15, ids:kusaCards.map(c => c.id) });
 
     // タネ・カスは、菊に杯（9月のタネ札）をタネ側・カス2枚分側のどちらに数えるかで有利な方を採用する
     // （checkYaku()のtaneKasuYaku()と同じ考え方。カード自体は書き換えず、集計時だけ選ぶ）
@@ -1731,8 +1762,8 @@ const VOICE_YAKU = {
       const taneIds = (asKasu ? taneCardsAll.filter(c => c.id !== sakazukiCard.id) : taneCardsAll).map(c => c.id);
       const kasuIds = (asKasu ? [...kasuCardsAll, sakazukiCard] : kasuCardsAll).map(c => c.id);
       const list = [];
-      if(taneCount > 5) list.push({ points:(taneCount - 5) * 10, ids:taneIds });
-      if(kasuCount > 10) list.push({ points:(kasuCount - 10) * 10, ids:kasuIds });
+      if(taneCount > 5) list.push({ name:"タネ", points:(taneCount - 5) * 10, ids:taneIds });
+      if(kasuCount > 10) list.push({ name:"カス", points:(kasuCount - 10) * 10, ids:kasuIds });
       return list;
     }
     let taneKasuGroupResult;
@@ -1747,19 +1778,19 @@ const VOICE_YAKU = {
     groups.push(...taneKasuGroupResult);
 
     const tanzakuCards = cards.filter(c => c.type === "tanzaku");
-    if(tanzakuCards.length > 5) groups.push({ points:(tanzakuCards.length - 5) * 10, ids:tanzakuCards.map(c => c.id) });
+    if(tanzakuCards.length > 5) groups.push({ name:"短冊", points:(tanzakuCards.length - 5) * 10, ids:tanzakuCards.map(c => c.id) });
 
     const yanagiCards = cards.filter(c => c.month === 11);
-    if(yanagiCards.length === 4) groups.push({ points:15, ids:yanagiCards.map(c => c.id) });
+    if(yanagiCards.length === 4) groups.push({ name:"雨しま", points:15, ids:yanagiCards.map(c => c.id) });
 
     const kiriCards = cards.filter(c => c.month === 12);
-    if(kiriCards.length === 4) groups.push({ points:15, ids:kiriCards.map(c => c.id) });
+    if(kiriCards.length === 4) groups.push({ name:"桐しま", points:15, ids:kiriCards.map(c => c.id) });
 
     const fujiCards = cards.filter(c => c.month === 4);
-    if(fujiCards.length === 4) groups.push({ points:15, ids:fujiCards.map(c => c.id) });
+    if(fujiCards.length === 4) groups.push({ name:"藤島", points:15, ids:fujiCards.map(c => c.id) });
 
     const monthCards = cards.filter(c => c.month === currentMonth);
-    if(monthCards.length === 4) groups.push({ points:15, ids:monthCards.map(c => c.id) });
+    if(monthCards.length === 4) groups.push({ name:"月島", points:15, ids:monthCards.map(c => c.id) });
 
     return groups;
   }
@@ -1783,6 +1814,218 @@ const VOICE_YAKU = {
     el.innerHTML = "";
     el.classList.toggle("large", gameEnded && !LAYOUT.compact);
     orderCapturedForDisplay(list).forEach(def => { el.appendChild(cardEl(def)); });
+  }
+
+  // ==================== 対局終了後の取札表示 ====================
+  // 各自の取札を、卓の中央寄りから自分寄りへ「①できた役の札（役ごと・役名と点数つき）→②光(20点)→
+  // ③タネ(10点)→④短冊(5点)→⑤カス」の順に並べる（あなた＝下、CPU-A＝左、CPU-B＝右）。
+  // 役に使われた札は①だけに出し、複数の役に使われる札は点数の高い役のほうに1枚だけ出す。
+  // フケの時はフケた人の①に「フケ」だけを出し、札はすべて②〜⑤に並べる（settleYaku()の結果をそのまま使う）。
+  // 表示だけの処理で、得点・役の判定には一切関わらない。
+  const CV_TYPE_ORDER = ["hikari", "tane", "tanzaku", "kasu"];
+  const CV_LABEL_H = 16, CV_LABEL_STEP = 18;
+
+  function capturedViewBands(player, yakuList){
+    const cards = captured[player];
+    const idsByName = {};
+    yakuCardGroups(cards).forEach(g => { idsByName[g.name] = g.ids; });
+    const used = new Set();
+    const groups = [];
+    yakuList.slice().sort((a, b) => b.points - a.points).forEach(y => {
+      // 配札時の4枚そろい（「N月四枚」）はその月の札。手役・総ざらえ・場八〜などは取札に対応する札が無いのでラベルだけ
+      const bundle = /^(\d+)月四枚$/.exec(y.name);
+      const ids = bundle ? cards.filter(c => c.month === Number(bundle[1])).map(c => c.id) : (idsByName[y.name] || []);
+      const label = `${y.name} +${y.points}`;
+      const own = cards.filter(c => ids.includes(c.id) && !used.has(c.id)).sort((a, b) => a.month - b.month);
+      if(ids.length && own.length === 0){
+        // 札がすべて先の役で表示済みで、それが1つの役の札とちょうど同じ（例：雨しまと月島）なら、その役のラベルに並べる。
+        // いくつかの役にまたがる時（例：青短＋草がある時の短冊）は、ラベルだけを出す
+        const hosts = groups.filter(g => g.cards.some(c => ids.includes(c.id)));
+        if(hosts.length === 1 && hosts[0].cards.length === ids.length){ hosts[0].labels.push(label); return; }
+      }
+      own.forEach(c => used.add(c.id));
+      groups.push({ labels:[label], cards:own });
+    });
+    const bands = [];
+    if(groups.length) bands.push({ yaku:true, groups });
+    CV_TYPE_ORDER.forEach(t => {
+      const list = cards.filter(c => c.type === t && !used.has(c.id)).sort((a, b) => a.month - b.month);
+      if(list.length) bands.push({ yaku:false, cards:list });
+    });
+    return bands;
+  }
+
+  let cvMeasureCtx = null;
+  function cvLabelWidth(text){
+    if(!cvMeasureCtx) cvMeasureCtx = document.createElement("canvas").getContext("2d");
+    cvMeasureCtx.font = 'bold 11px "Hiragino Sans","Yu Gothic",sans-serif';
+    return Math.ceil(cvMeasureCtx.measureText(text).width) + 14;
+  }
+  function cvGroupLabelWidth(gr){ return Math.max(...gr.labels.map(cvLabelWidth)); }
+
+  // 段（横の行）で並べる：bandsを上から順に。各段は幅maxWで折り返す。入らなければnull
+  function cvRows(bands, maxW, s){
+    const perLine = Math.floor((maxW + s.g) / (s.cw + s.g));
+    if(perLine < 1) return null;
+    const items = [];
+    let y = 0, w = 0;
+    for(let bi = 0; bi < bands.length; bi++){
+      const band = bands[bi];
+      if(bi > 0) y += s.bg;
+      if(!band.yaku){
+        const n = band.cards.length;
+        band.cards.forEach((c, i) => items.push({ card:c, x:(i % perLine) * (s.cw + s.g), y:y + Math.floor(i / perLine) * (s.ch + s.g) }));
+        w = Math.max(w, Math.min(n, perLine) * (s.cw + s.g) - s.g);
+        y += Math.ceil(n / perLine) * (s.ch + s.g) - s.g;
+        continue;
+      }
+      // 役：役ごとのまとまり（ラベル＋札）を左から並べ、入りきらなければ次の行へ
+      let x = 0, lineH = 0;
+      for(const gr of band.groups){
+        const lw = cvGroupLabelWidth(gr);
+        if(lw > maxW) return null;
+        const n = gr.cards.length;
+        const labH = gr.labels.length * CV_LABEL_STEP;
+        const gw = Math.max(lw, n ? Math.min(n, perLine) * (s.cw + s.g) - s.g : 0);
+        const gh = labH + (n ? Math.ceil(n / perLine) * (s.ch + s.g) - s.g : 0);
+        if(x > 0 && x + gw > maxW){ y += lineH + s.bg; x = 0; lineH = 0; }
+        gr.labels.forEach((t, li) => items.push({ label:t, x, y:y + li * CV_LABEL_STEP }));
+        gr.cards.forEach((c, i) => items.push({ card:c, x:x + (i % perLine) * (s.cw + s.g), y:y + labH + Math.floor(i / perLine) * (s.ch + s.g) }));
+        w = Math.max(w, x + gw);
+        x += gw + s.gg;
+        lineH = Math.max(lineH, gh);
+      }
+      y += lineH;
+    }
+    return { w, h:y, items };
+  }
+
+  // 列（縦）で並べる：bandsは中央寄り→自分寄りの順。centerOnRight（CPU-A）なら右端が中央寄り。
+  // 各列は高さmaxHで折り返して次の列へ。入らなければnull
+  function cvCols(bands, maxH, s, centerOnRight){
+    const blocks = [];
+    for(const band of bands){
+      const units = band.yaku ? band.groups : [{ labels:[], cards:band.cards }];
+      const ordered = centerOnRight ? units.slice().reverse() : units;
+      const items = [];
+      let x = 0, h = 0;
+      for(const gr of ordered){
+        const labH = gr.labels.length * CV_LABEL_STEP;
+        const n = gr.cards.length;
+        const pc = Math.floor((maxH - labH + s.g) / (s.ch + s.g));
+        if((n && pc < 1) || labH > maxH) return null;
+        const cols = n ? Math.ceil(n / pc) : 0;
+        const lw = gr.labels.length ? cvGroupLabelWidth(gr) : 0;
+        const gw = Math.max(lw, cols ? cols * (s.cw + s.g) - s.g : 0);
+        gr.labels.forEach((t, li) => items.push({ label:t, x, y:li * CV_LABEL_STEP }));
+        gr.cards.forEach((c, i) => items.push({ card:c, x:x + Math.floor(i / pc) * (s.cw + s.g), y:labH + (i % pc) * (s.ch + s.g) }));
+        h = Math.max(h, labH + (n ? Math.min(n, pc) * (s.ch + s.g) - s.g : 0));
+        x += gw + s.gg;
+      }
+      blocks.push({ w:Math.max(0, x - s.gg), h, items });
+    }
+    const ordered = centerOnRight ? blocks.slice().reverse() : blocks;
+    const items = [];
+    let x = 0, h = 0;
+    ordered.forEach((b, i) => {
+      if(i > 0) x += s.bg;
+      b.items.forEach(it => items.push({ ...it, x:it.x + x }));
+      x += b.w;
+      h = Math.max(h, b.h);
+    });
+    return { w:x, h, items };
+  }
+
+  // 3人分の置き方を、決められた札の大きさsで試す。入る置き方があれば各自の位置を返す
+  //   A：あなたは下に横幅いっぱい、CPU-A・CPU-Bはその上の左右に列で
+  //   B：CPU-A・CPU-Bは左右に縦いっぱいの列で、あなたはその間の下に
+  //   C：あなたは下に横幅いっぱい、CPU-A・CPU-Bはその上の左右に段で（中央寄り＝下）
+  function cvTryLayouts(bands, area, s){
+    const LH = 20, ZG = 14, NAME_W = 110;
+    const zone = (block, x, y, alignRight) => ({ block, x, y, alignRight });
+    const you = cvRows(bands.you, area.w, s);
+    const upperH = you ? area.h - (you.h + LH) - ZG : -1;
+    const youZone = (left, width) => zone(you, left + Math.max(0, (width - you.w) / 2), area.y + area.h - you.h, false);
+    if(you && upperH >= LH){
+      const a = cvCols(bands.cpuA, upperH - LH, s, true);
+      const b = cvCols(bands.cpuB, upperH - LH, s, false);
+      if(a && b && Math.max(a.w, NAME_W) + Math.max(b.w, NAME_W) + ZG * 2 <= area.w){
+        return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true) };
+      }
+    }
+    {
+      const a = cvCols(bands.cpuA, area.h - LH, s, true);
+      const b = cvCols(bands.cpuB, area.h - LH, s, false);
+      if(a && b){
+        const aw = Math.max(a.w, NAME_W), bw = Math.max(b.w, NAME_W);
+        const midW = area.w - aw - bw - ZG * 2;
+        const y2 = midW > 0 ? cvRows(bands.you, midW, s) : null;
+        if(y2 && y2.h + LH <= area.h){
+          return { you:zone(y2, area.x + aw + ZG + (midW - y2.w) / 2, area.y + area.h - y2.h, false),
+                   cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true) };
+        }
+      }
+    }
+    if(you && upperH >= LH){
+      const halfW = (area.w - ZG) / 2;
+      const a = cvRows(bands.cpuA.slice().reverse(), halfW, s);
+      const b = cvRows(bands.cpuB.slice().reverse(), halfW, s);
+      if(a && b && Math.max(a.h, b.h) + LH <= upperH){
+        return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true) };
+      }
+    }
+    return null;
+  }
+
+  // 結果パネルを閉じている間（「盤面を見る」→「結果を見る」で戻る）だけ開く
+  function renderCapturedView(){
+    const view = document.getElementById("capturedView");
+    const open = gameEnded && document.getElementById("resultBox").style.display === "none";
+    view.classList.toggle("open", open);
+    document.body.classList.toggle("cv-open", open);
+    view.innerHTML = "";
+    if(!open) return;
+    const { yakuResults } = settleYaku();
+    const players = ["you", "cpuA", "cpuB"];
+    const bands = {};
+    players.forEach(p => { bands[p] = capturedViewBands(p, yakuResults[p]); });
+    const W = view.clientWidth, H = view.clientHeight, pad = 10, headH = 52;
+    const area = { x:pad, y:headH, w:W - pad * 2, h:H - headH - pad };
+    let s = null, zones = null;
+    for(let cw = 140; cw >= 10 && !zones; cw--){
+      s = { cw, ch:Math.round(cw * 109 / 76), g:Math.max(2, Math.round(cw * 0.05)), gg:Math.max(6, Math.round(cw * 0.12)), bg:Math.max(10, Math.round(cw * 0.22)) };
+      zones = cvTryLayouts(bands, area, s);
+    }
+    const add = (cls, html, left, top, right) => {
+      const el = document.createElement("div");
+      el.className = cls;
+      el.innerHTML = html;
+      if(right !== undefined) el.style.right = right + "px"; else el.style.left = left + "px";
+      el.style.top = top + "px";
+      view.appendChild(el);
+      return el;
+    };
+    add("cv-title", `${currentMonth}月の取札`, 12, 12);
+    if(!zones) return;
+    players.forEach(p => {
+      const z = zones[p];
+      const name = `${PLAYER_LABEL[p]}<span class="cv-pts">${totalPoints(captured[p])}点</span>`;
+      const ly = z.y - 20;
+      if(z.alignRight) add("cv-zone-label", name, 0, ly, W - (z.x + z.block.w));
+      else add("cv-zone-label", name, z.x, ly);
+      z.block.items.forEach(it => {
+        if(it.card){
+          const el = cardEl(it.card);
+          el.style.left = Math.round(z.x + it.x) + "px";
+          el.style.top = Math.round(z.y + it.y) + "px";
+          el.style.width = s.cw + "px";
+          el.style.height = s.ch + "px";
+          view.appendChild(el);
+        } else {
+          add("cv-yaku-label", "", Math.round(z.x + it.x), Math.round(z.y + it.y)).textContent = it.label;
+        }
+      });
+    });
   }
 
   function renderAll(){
@@ -1839,6 +2082,7 @@ const VOICE_YAKU = {
     renderLiveYaku("yakuLiveYou", "you", captured.you);
     renderLiveYaku("yakuLiveCpuA", "cpuA", captured.cpuA);
     renderLiveYaku("yakuLiveCpuB", "cpuB", captured.cpuB);
+    renderCapturedView();
   }
 
   // プレイヤーごとに、これまで掛け声を鳴らした役名を記録しておく（同じ役で毎回鳴るのを防ぐ）
@@ -2260,12 +2504,12 @@ const VOICE_YAKU = {
     const actionsHtml = isReplaying ?
       `<div class="result-actions">
         <button type="button" class="result-btn" id="backToProductionBtn">本番の結果に戻る</button>
-        <button type="button" class="result-btn secondary compact-only" id="hideResultBtn">盤面を見る</button>
+        <button type="button" class="result-btn secondary" id="hideResultBtn">盤面を見る</button>
       </div>` :
       `<div class="result-actions">
         <button type="button" class="result-btn" id="nextMonthBtn">次のゲームへ（${currentMonth % 12 + 1}月へ）</button>
         <button type="button" class="result-btn secondary" id="replayBtn">同じ手札・山札でリプレイ</button>
-        <button type="button" class="result-btn secondary compact-only" id="hideResultBtn">盤面を見る</button>
+        <button type="button" class="result-btn secondary" id="hideResultBtn">盤面を見る</button>
       </div>`;
     box.innerHTML = `${seasonBanner}<div class="breakdown-row">${playerBlocks}</div>${actionsHtml}`;
     if(isReplaying){
@@ -2278,6 +2522,7 @@ const VOICE_YAKU = {
     document.getElementById("hideResultBtn").addEventListener("click", () => {
       box.style.display = "none";
       document.getElementById("resultReopen").style.display = "block";
+      renderCapturedView();
     });
     setTurnIndicator("");
     renderAll();
@@ -2394,6 +2639,7 @@ const VOICE_YAKU = {
   document.getElementById("resultReopen").addEventListener("click", () => {
     document.getElementById("resultBox").style.display = "block";
     document.getElementById("resultReopen").style.display = "none";
+    renderCapturedView();
   });
 
   applyLayout();
