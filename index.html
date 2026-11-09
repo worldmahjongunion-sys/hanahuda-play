@@ -250,13 +250,6 @@
     max-width:360px;
   }
   .captured-row .card{ width:var(--cmw); height:var(--cmh); }
-  /* 対局終了時は場札・手札と同じ大きさで取札を表示する（枚数が多ければ折り返す）。
-     2段目以降が画面中央で衝突しないよう、各自ごとに片端（左右）に寄せて折り返す。 */
-  .captured-row.large{ gap:4px; max-width:47vw; }
-  .captured-row.large .card{ width:76px; height:109px; }
-  #capturedYou.captured-row.large{ align-self:flex-start; justify-content:flex-start; }
-  #capturedCpuA.captured-row.large{ align-self:flex-start; justify-content:flex-start; }
-  #capturedCpuB.captured-row.large{ align-self:flex-end; justify-content:flex-end; }
   .board.ended{ overflow-y:auto; }
 
   .card{
@@ -428,6 +421,19 @@
     border-radius:6px;
   }
   body.cv-open .result-reopen{ top:8px; bottom:auto; }
+  /* 結果パネルを取札表示の中央の空きに置く時（位置・幅は renderCapturedView() が指定） */
+  .result-box.floating{ position:fixed; z-index:160; margin:0; max-width:calc(100vw - 20px); }
+  .board.compact .result-box.floating{ right:auto; max-height:none; }
+  /* 狭い画面でパネルを中央に置く時は、3人の内訳を横に3列で並べ、文字を少し詰めて高さを抑える */
+  .board.compact .result-box.floating{ padding:6px; font-size:11px; }
+  .board.compact .result-box.floating .season-banner{ font-size:13px; padding:2px 6px 4px; }
+  .board.compact .result-box.floating .breakdown-row{ flex-wrap:nowrap; gap:4px; margin-top:4px; }
+  .board.compact .result-box.floating .breakdown-block{ flex:1 1 0; min-width:0; max-width:none; padding:2px 4px; }
+  .board.compact .result-box.floating .breakdown-name{ font-size:11px; }
+  .board.compact .result-box.floating .breakdown-line{ font-size:10px; line-height:1.35; padding-left:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .board.compact .result-box.floating .breakdown-final{ font-size:12px; padding-left:2px; }
+  .board.compact .result-box.floating .result-actions{ position:static; margin-top:4px; padding:2px 0; gap:6px; }
+  .board.compact .result-box.floating .result-btn{ padding:5px 10px; font-size:11px; }
 
   /* 手役で公開した札（自分・CPUとも）の縁取り */
   .card.revealed{ box-shadow:0 0 0 2px var(--gold), 0 2px 4px rgba(0,0,0,0.45); }
@@ -1812,7 +1818,6 @@ const VOICE_YAKU = {
   function renderCapturedRow(elId, list){
     const el = document.getElementById(elId);
     el.innerHTML = "";
-    el.classList.toggle("large", gameEnded && !LAYOUT.compact);
     orderCapturedForDisplay(list).forEach(def => { el.appendChild(cardEl(def)); });
   }
 
@@ -1940,17 +1945,25 @@ const VOICE_YAKU = {
   //   A：あなたは下に横幅いっぱい、CPU-A・CPU-Bはその上の左右に列で
   //   B：CPU-A・CPU-Bは左右に縦いっぱいの列で、あなたはその間の下に
   //   C：あなたは下に横幅いっぱい、CPU-A・CPU-Bはその上の左右に段で（中央寄り＝下）
-  function cvTryLayouts(bands, area, s){
+  // reserve（{w,h}）を渡すと、卓の中央（3人の札に囲まれた空き）にその大きさの場所も確保し、位置を panel で返す
+  function cvTryLayouts(bands, area, s, reserve){
     const LH = 20, ZG = 14, NAME_W = 110;
+    const rw = reserve ? reserve.w : 0, rh = reserve ? reserve.h : 0;
     const zone = (block, x, y, alignRight) => ({ block, x, y, alignRight });
+    const center = (x, w, y, h) => reserve ? { x:x + (w - rw) / 2, y:y + (h - rh) / 2 } : null;
     const you = cvRows(bands.you, area.w, s);
     const upperH = you ? area.h - (you.h + LH) - ZG : -1;
     const youZone = (left, width) => zone(you, left + Math.max(0, (width - you.w) / 2), area.y + area.h - you.h, false);
-    if(you && upperH >= LH){
+    if(you && upperH >= Math.max(LH, rh)){
       const a = cvCols(bands.cpuA, upperH - LH, s, true);
       const b = cvCols(bands.cpuB, upperH - LH, s, false);
-      if(a && b && Math.max(a.w, NAME_W) + Math.max(b.w, NAME_W) + ZG * 2 <= area.w){
-        return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true) };
+      if(a && b){
+        const aw = Math.max(a.w, NAME_W), bw = Math.max(b.w, NAME_W);
+        const gapW = area.w - aw - bw - ZG * 2;
+        if(gapW >= rw){
+          return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true),
+                   panel:center(area.x + aw + ZG, gapW, area.y, upperH) };
+        }
       }
     }
     {
@@ -1959,30 +1972,54 @@ const VOICE_YAKU = {
       if(a && b){
         const aw = Math.max(a.w, NAME_W), bw = Math.max(b.w, NAME_W);
         const midW = area.w - aw - bw - ZG * 2;
-        const y2 = midW > 0 ? cvRows(bands.you, midW, s) : null;
-        if(y2 && y2.h + LH <= area.h){
+        const y2 = midW > 0 && midW >= rw ? cvRows(bands.you, midW, s) : null;
+        const spaceH = y2 ? area.h - (y2.h + LH) - (reserve ? ZG : 0) : -1;
+        if(y2 && spaceH >= rh){
           return { you:zone(y2, area.x + aw + ZG + (midW - y2.w) / 2, area.y + area.h - y2.h, false),
-                   cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true) };
+                   cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true),
+                   panel:center(area.x + aw + ZG, midW, area.y, spaceH) };
         }
       }
     }
-    if(you && upperH >= LH){
+    if(you && upperH >= LH && area.w >= rw){
       const halfW = (area.w - ZG) / 2;
       const a = cvRows(bands.cpuA.slice().reverse(), halfW, s);
       const b = cvRows(bands.cpuB.slice().reverse(), halfW, s);
-      if(a && b && Math.max(a.h, b.h) + LH <= upperH){
-        return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true) };
+      const cpuH = a && b ? Math.max(a.h, b.h) + LH : 0;
+      const spaceH = upperH - cpuH - (reserve ? ZG : 0);
+      if(a && b && spaceH >= rh){
+        return { you:youZone(area.x, area.w), cpuA:zone(a, area.x, area.y + LH, false), cpuB:zone(b, area.x + area.w - b.w, area.y + LH, true),
+                 panel:center(area.x, area.w, area.y + cpuH + ZG, spaceH) };
       }
     }
     return null;
   }
 
-  // 結果パネルを閉じている間（「盤面を見る」→「結果を見る」で戻る）だけ開く
+  function cvSizes(cw){
+    return { cw, ch:Math.round(cw * 109 / 76), g:Math.max(2, Math.round(cw * 0.05)), gg:Math.max(6, Math.round(cw * 0.12)), bg:Math.max(10, Math.round(cw * 0.22)) };
+  }
+  function cvFindLayout(bands, area, reserve, minCw){
+    for(let cw = 140; cw >= minCw; cw--){
+      const s = cvSizes(cw);
+      const zones = cvTryLayouts(bands, area, s, reserve);
+      if(zones) return { s, zones };
+    }
+    return null;
+  }
+
+  // 対局終了後はいつもこの取札表示を盤面の代わりに出す。結果パネルを開いている間は、パネルを卓の中央
+  // （3人の札に囲まれた空き）に置き、札がパネルに隠れないように並べる。パネルの場所を取ると札が小さく
+  // なりすぎる時（スマホなど）は、パネルは従来どおり画面の上に重ねて出し、「盤面を見る」で札だけを見られる
+  const CV_MIN_CW_WITH_PANEL = 30;
   function renderCapturedView(){
     const view = document.getElementById("capturedView");
-    const open = gameEnded && document.getElementById("resultBox").style.display === "none";
+    const box = document.getElementById("resultBox");
+    const open = gameEnded;
+    const panelShown = open && box.style.display !== "none";
     view.classList.toggle("open", open);
     document.body.classList.toggle("cv-open", open);
+    box.classList.remove("floating");
+    box.style.left = box.style.top = box.style.width = "";
     view.innerHTML = "";
     if(!open) return;
     const { yakuResults } = settleYaku();
@@ -1991,11 +2028,25 @@ const VOICE_YAKU = {
     players.forEach(p => { bands[p] = capturedViewBands(p, yakuResults[p]); });
     const W = view.clientWidth, H = view.clientHeight, pad = 10, headH = 52;
     const area = { x:pad, y:headH, w:W - pad * 2, h:H - headH - pad };
-    let s = null, zones = null;
-    for(let cw = 140; cw >= 10 && !zones; cw--){
-      s = { cw, ch:Math.round(cw * 109 / 76), g:Math.max(2, Math.round(cw * 0.05)), gg:Math.max(6, Math.round(cw * 0.12)), bg:Math.max(10, Math.round(cw * 0.22)) };
-      zones = cvTryLayouts(bands, area, s);
+    let found = null;
+    if(panelShown){
+      // パネルの大きさ（狭い画面では横幅をできるだけ詰めた大きさ）を測ってから、その場所を空けて並べる
+      box.classList.add("floating");
+      if(LAYOUT.mode === "portrait") box.style.width = (W - 20) + "px";
+      // 横幅を先に固定してから高さを測る（置く位置で折り返しが変わって高さがずれないように）
+      const reserve = { w:Math.ceil(box.offsetWidth), h:0 };
+      box.style.width = reserve.w + "px";
+      reserve.h = Math.ceil(box.scrollHeight);
+      found = cvFindLayout(bands, area, reserve, CV_MIN_CW_WITH_PANEL);
+      if(found){
+        box.style.left = Math.round(found.zones.panel.x) + "px";
+        box.style.top = Math.round(found.zones.panel.y) + "px";
+      } else {
+        box.classList.remove("floating");
+        box.style.width = "";
+      }
     }
+    if(!found) found = cvFindLayout(bands, area, null, 10);
     const add = (cls, html, left, top, right) => {
       const el = document.createElement("div");
       el.className = cls;
@@ -2006,7 +2057,8 @@ const VOICE_YAKU = {
       return el;
     };
     add("cv-title", `${currentMonth}月の取札`, 12, 12);
-    if(!zones) return;
+    if(!found) return;
+    const { s, zones } = found;
     players.forEach(p => {
       const z = zones[p];
       const name = `${PLAYER_LABEL[p]}<span class="cv-pts">${totalPoints(captured[p])}点</span>`;
